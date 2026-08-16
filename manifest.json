@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "community.split-workspaces",
+  "name": "Split Monitor Workspaces",
+  "version": "1.0.0",
+  "author": "Community",
+  "description": "Per-monitor workspace indicators for split-monitor-workspaces.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "defaultSection": "left"
+  }
+}
