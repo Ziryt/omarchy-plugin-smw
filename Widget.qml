@@ -2,30 +2,17 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Hyprland
+import Quickshell.Io
 
 import qs.Commons
 import qs.Ui
 
+import "WorkspaceRules.js" as WorkspaceRules
+
 BarWidget {
     id: root
 
-    moduleName: "community.split-workspaces"
-
-    /*
-     * Must match split-monitor-workspaces:
-     *
-     *   workspace_count = 9
-     *
-     * SMW currently does not expose its Lua configuration to Quickshell,
-     * so this remains an explicit setting.
-     */
-    property int workspaceCount: 9
-
-    /*
-     * These workspaces are always visible.
-     * Higher workspaces are displayed only while occupied or active.
-     */
-    property int permanentWorkspaceCount: 5
+    moduleName: "ziryt.split-workspaces"
 
     /*
      * BarWidget is instantiated separately for every screen, but the base
@@ -45,63 +32,236 @@ BarWidget {
         root.screen ? Hyprland.monitorFor(root.screen) : null
 
     /*
-     * Determine which split-monitor-workspaces range belongs to this monitor.
+     * split-monitor-workspaces (SMW) does not lay monitors out in uniform
+     * blocks. Each monitor's range width is `max_workspaces[monitor]` (a
+     * per-monitor override) or the global `workspace_count` default, and
+     * monitors are packed contiguously in `monitor_priority` order - so
+     * different monitors can have different-sized ranges. Assuming a fixed
+     * block size here would be wrong whenever a user's max_workspaces
+     * differs across monitors.
      *
-     * Do not use Hyprland monitor IDs for this.
+     * Rather than reimplement SMW's block math, this widget:
      *
-     * Hyprland monitor IDs describe Hyprland's monitor objects, but they are
-     * not a reliable representation of split-monitor-workspaces' workspace
-     * ordering, especially when monitors are added, removed, reordered, or
-     * configured with monitor_priority.
+     *   - Lists the workspaces that ACTUALLY belong to this monitor right
+     *     now (workspaceList() below), read directly from Hyprland's own
+     *     live monitor association - always correct, no assumptions.
+     *   - Auto-detects this monitor's assigned range (base offset + size,
+     *     for a nicer "1, 2, 3..." local numbering and to bound the list
+     *     above) from `hyprctl -j workspacerules`, since SMW registers a
+     *     persistent workspace_rule for every workspace in a monitor's
+     *     full assigned range when enable_persistent_workspaces is on
+     *     (SMW's own default). See WorkspaceRules.js.
      *
-     * Instead, find the active workspace of this monitor and derive the
-     * beginning of its SMW range from that workspace.
-     *
-     * Example:
-     *
-     *   workspace_count = 9
-     *
-     *   monitor A active workspace = 3
-     *       -> range starts at 1
-     *
-     *   monitor B active workspace = 12
-     *       -> range starts at 10
-     *
-     *   monitor C active workspace = 21
-     *       -> range starts at 19
-     *
-     * If the monitor has no active workspace yet, fall back to zero. This
-     * keeps the widget alive during monitor hotplug/startup transitions.
+     *     The bound matters: after a live SMW reconfiguration (monitor
+     *     unplugged/replugged, config reload with different
+     *     max_workspaces), Hyprland can keep reporting `workspace.monitor`
+     *     for a workspace that no longer belongs to that monitor's SMW
+     *     range - e.g. an occupied workspace that wasn't force-relocated.
+     *     Filtering by monitor name alone would leak these stale
+     *     workspaces into the list; bounding to the known range keeps them
+     *     out (verified live: shrinking DP-2's max_workspaces surfaced
+     *     exactly this - leftover workspaces from its old, larger range
+     *     kept reporting monitor=DP-2).
      */
-    function monitorOffset() {
-        if (!root.monitor || !root.monitor.activeWorkspace)
-            return 0
+    property var rangeByMonitor: ({})
+    property bool rulesResolved: false
+    property bool rulesRequestPending: false
 
-        var activeId = Number(root.monitor.activeWorkspace.id)
-        var count = Math.max(1, Number(root.workspaceCount))
+    function refreshWorkspaceRules() {
+        if (rulesProc.running) {
+            root.rulesRequestPending = true
+            return
+        }
 
-        if (!isFinite(activeId) || activeId <= 0)
-            return 0
+        root.rulesRequestPending = false
+        rulesProc.running = true
+    }
 
-        /*
-         * Workspace IDs are arranged in blocks of workspaceCount:
-         *
-         *   1..count
-         *   count+1..count*2
-         *   count*2+1..count*3
-         *
-         * Find the block containing this monitor's currently active
-         * workspace.
-         */
-        return Math.floor((activeId - 1) / count) * count
+    Component.onCompleted: root.refreshWorkspaceRules()
+
+    onMonitorChanged: root.refreshWorkspaceRules()
+
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) {
+            if (!event || !event.name)
+                return
+
+            var name = String(event.name)
+            if (name === "configreloaded" ||
+                name.indexOf("monitoradded") !== -1 ||
+                name.indexOf("monitorremoved") !== -1) {
+                root.refreshWorkspaceRules()
+            }
+        }
+    }
+
+    Process {
+        id: rulesProc
+        command: ["hyprctl", "-j", "workspacerules"]
+        onRunningChanged: {
+            if (running) {
+                rulesStallTimer.restart()
+                return
+            }
+
+            rulesStallTimer.stop()
+            if (root.rulesRequestPending)
+                root.refreshWorkspaceRules()
+        }
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                var rules
+                try {
+                    rules = JSON.parse(text || "[]")
+                } catch (e) {
+                    return
+                }
+
+                if (!Array.isArray(rules))
+                    return
+
+                root.rangeByMonitor = WorkspaceRules.rangeByMonitor(rules)
+                root.rulesResolved = true
+            }
+        }
+    }
+
+    Timer {
+        id: rulesStallTimer
+        interval: 5000
+        onTriggered: {
+            rulesProc.running = false
+            root.rulesRequestPending = true
+        }
+    }
+
+    // Safety-net retry until the first successful parse lands - covers a
+    // process that failed at shell startup (e.g. hyprctl not yet ready).
+    Timer {
+        interval: 10000
+        running: !root.rulesResolved
+        repeat: true
+        onTriggered: root.refreshWorkspaceRules()
+    }
+
+    /*
+     * This monitor's auto-detected assigned range, or undefined if
+     * hyprctl -j workspacerules hasn't resolved a trustworthy one yet
+     * (persistence disabled, query still pending, or a non-contiguous
+     * rule set for this monitor - see WorkspaceRules.js).
+     */
+    function monitorRange() {
+        var name = root.monitor ? root.monitor.name : ""
+        return name ? root.rangeByMonitor[name] : undefined
+    }
+
+    /*
+     * Real Hyprland workspaces currently tagged to this monitor, sorted by
+     * id, with NO range bound applied. `.monitor.name` (not numeric id) is
+     * the join key: it's the same stable string SMW's own config uses
+     * (max_workspaces/monitor_priority keys) and is not reassigned across a
+     * hotplug the way numeric monitor ids can be.
+     */
+    function monitorWorkspacesUnbounded() {
+        if (!root.monitor)
+            return []
+
+        var name = root.monitor.name
+        var values = Hyprland.workspaces.values
+        var out = []
+
+        for (var i = 0; i < values.length; i++) {
+            var workspace = values[i]
+
+            if (workspace && workspace.id > 0 && workspace.monitor && workspace.monitor.name === name)
+                out.push(workspace)
+        }
+
+        out.sort(function(a, b) { return a.id - b.id })
+        return out
+    }
+
+    /*
+     * Real workspaces belonging to this monitor, bounded to its known SMW
+     * range once one has been auto-detected. Without this bound, a stale
+     * workspace Hyprland still tags to this monitor from before a live
+     * reconfiguration (see comment above rangeByMonitor) would otherwise
+     * leak into the display.
+     */
+    function monitorWorkspaces() {
+        var out = root.monitorWorkspacesUnbounded()
+        var range = root.monitorRange()
+        if (range === undefined)
+            return out
+
+        var lo = range.base + 1
+        var hi = range.base + range.count
+        return out.filter(function(workspace) {
+            return workspace.id >= lo && workspace.id <= hi
+        })
+    }
+
+    /*
+     * This monitor's base offset: absolute workspace id = base + local id.
+     *
+     * Prefer the auto-detected value from hyprctl -j workspacerules; fall
+     * back to deriving it from whatever real workspaces already exist on
+     * this monitor (unbounded - there's no known range yet to bound
+     * against); worst case (nothing resolved yet, nothing exists yet)
+     * fall back to 0, i.e. show raw absolute ids until something resolves.
+     */
+    function autoBase() {
+        var range = root.monitorRange()
+        if (range !== undefined)
+            return range.base
+
+        var live = root.monitorWorkspacesUnbounded()
+        if (live.length > 0)
+            return live[0].id - 1
+
+        return 0
     }
 
     function globalWorkspaceId(localId) {
-        return root.monitorOffset() + localId
+        return root.autoBase() + localId
     }
 
     function localWorkspaceId(globalId) {
-        return globalId - root.monitorOffset()
+        return globalId - root.autoBase()
+    }
+
+    /*
+     * Local workspace numbers to render.
+     *
+     * By default (permanentWorkspaceCount = 0) every workspace that
+     * currently exists on this monitor is shown - accurate for the common
+     * enable_persistent_workspaces=true setup, where SMW pre-creates the
+     * monitor's whole assigned range up front.
+     *
+     * When permanentWorkspaceCount is set to N > 0, only the first N are
+     * always shown; anything beyond N still shows if it's occupied or
+     * active, so a cap never hides where you currently are or a workspace
+     * with windows on it.
+     */
+    function workspaceIds() {
+        var live = root.monitorWorkspaces()
+        var base = root.autoBase()
+        var cap = Math.max(0, Number(root.setting("permanentWorkspaceCount", 0)))
+
+        var ids = []
+        for (var i = 0; i < live.length; i++) {
+            var workspace = live[i]
+            var localId = workspace.id - base
+            var withinCap = cap === 0 || localId <= cap
+            var overflow = workspace.toplevels.values.length > 0 || workspace.active
+
+            if (withinCap || overflow)
+                ids.push(localId)
+        }
+
+        return ids
     }
 
     function workspaceById(globalId) {
@@ -118,79 +278,24 @@ BarWidget {
     }
 
     function workspaceOccupied(globalId) {
-        var values = Hyprland.toplevels.values
-
-        for (var i = 0; i < values.length; i++) {
-            var toplevel = values[i]
-
-            if (!toplevel || !toplevel.workspace)
-                continue
-
-            if (toplevel.workspace.id === globalId)
-                return true
-        }
-
-        return false
+        var workspace = root.workspaceById(globalId)
+        return !!workspace && workspace.toplevels.values.length > 0
     }
 
     /*
      * IMPORTANT:
      *
-     * Do NOT use Hyprland.focusedWorkspace here.
+     * Do NOT use Hyprland.focusedWorkspace/workspace.focused here.
      *
-     * That is one global focused workspace.
-     *
-     * We need the active workspace belonging to THIS monitor, so that:
-     *
-     *   monitor A -> its active workspace remains highlighted
-     *   monitor B -> its active workspace is highlighted independently
+     * `focused` means "active on its monitor AND that monitor has input
+     * focus" - a single global notion. We need "active on THIS monitor"
+     * regardless of which monitor currently has input focus, which is
+     * exactly HyprlandWorkspace.active (see workspace.hpp: "If this
+     * workspace is currently active on its monitor. See also @focused.").
      */
     function workspaceActiveOnThisMonitor(globalId) {
-        if (!root.monitor || !root.monitor.activeWorkspace)
-            return false
-
-        return root.monitor.activeWorkspace.id === globalId
-    }
-
-    /*
-     * Local workspace numbers that should be rendered.
-     *
-     * Always:
-     *
-     *   1 2 3 4 5
-     *
-     * Dynamically:
-     *
-     *   6..N when occupied or active
-     */
-    function workspaceIds() {
-        var ids = []
-
-        var count = Math.max(1, root.workspaceCount)
-        var permanent = Math.min(
-            root.permanentWorkspaceCount,
-            count
-        )
-
-        for (var localId = 1; localId <= permanent; localId++)
-            ids.push(localId)
-
-        for (
-            var extra = permanent + 1;
-            extra <= count;
-            extra++
-        ) {
-            var globalId = root.globalWorkspaceId(extra)
-
-            if (
-                root.workspaceOccupied(globalId) ||
-                root.workspaceActiveOnThisMonitor(globalId)
-            ) {
-                ids.push(extra)
-            }
-        }
-
-        return ids
+        var workspace = root.workspaceById(globalId)
+        return !!workspace && workspace.active === true
     }
 
     function focusWorkspace(localId) {
@@ -207,12 +312,9 @@ BarWidget {
          * omarchy.workspaces itself uses (Workspaces.qml, focusWorkspace()):
          * shell out through hyprctl with the Lua dispatcher call as text.
          *
-         * Dispatch the GLOBAL workspace ID.
-         *
-         * Example with 9 workspaces per monitor:
-         *
-         *   monitor 1, local 3 -> workspace 3
-         *   monitor 2, local 3 -> workspace 12
+         * Dispatch the GLOBAL workspace ID - correct regardless of which
+         * monitor is currently focused, unlike SMW's own keybind dispatcher
+         * (which resolves relative to whichever monitor has input focus).
          */
         root.bar.run(
             "hyprctl dispatch " +
@@ -272,7 +374,7 @@ BarWidget {
 
                 text:
                     active
-                        ? "\uDB85\uDCFB"
+                        ? "󱓻"
                         : String(localId)
 
                 opacity:

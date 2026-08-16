@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "community.split-workspaces",
+  "id": "ziryt.split-workspaces",
   "name": "Split Monitor Workspaces",
   "version": "1.0.0",
   "author": "Community",
@@ -10,6 +10,21 @@
     "barWidget": "Widget.qml"
   },
   "barWidget": {
-    "defaultSection": "left"
+    "defaultSection": "left",
+    "defaults": {
+      "permanentWorkspaceCount": 0
+    },
+    "schema": [
+      {
+        "key": "permanentWorkspaceCount",
+        "type": "integer",
+        "label": "Always-shown workspace count",
+        "description": "Always show at least this many local workspace numbers on each monitor; 0 shows every workspace that currently exists there. A workspace beyond this count still shows if it's occupied or active, so switching to it or opening a window there is never hidden.",
+        "min": 0,
+        "max": 50,
+        "step": 1,
+        "defaultValue": 0
+      }
+    ]
   }
 }

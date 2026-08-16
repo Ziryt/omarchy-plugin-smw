@@ -2,25 +2,37 @@
 
 Omarchy bar-widget plugin that shows independent, per-monitor workspace
 indicators for Hyprland's [split-monitor-workspaces](https://github.com/Duckonaut/split-monitor-workspaces)
-plugin.
+(SMW) plugin.
 
-Each monitor gets its own contiguous block of `workspaceCount` workspaces.
-The first `permanentWorkspaceCount` are always shown; higher ones appear
-only while occupied or active. Each monitor tracks and highlights its *own*
-active workspace independently, so switching focus on one monitor never
-mirrors onto or clears the indicator on another.
+Each monitor shows exactly the workspaces SMW has actually assigned to it -
+auto-detected live, with no manual configuration needed even when different
+monitors have different `max_workspaces`. Each monitor tracks and highlights
+its *own* active workspace independently, so switching focus on one monitor
+never mirrors onto or clears the indicator on another.
+
+By default every workspace that currently exists on a monitor is shown,
+which for the common `enable_persistent_workspaces = true` setup (SMW's own
+default) means every slot in that monitor's assigned range, since SMW
+pre-creates them all up front. Set `permanentWorkspaceCount` (below) to
+show a smaller fixed count instead - anything beyond it still appears
+whenever it's occupied or active, so a cap never hides where you currently
+are.
 
 ## Requirements
 
 - Hyprland with `split-monitor-workspaces` installed and configured
-- `workspaceCount` in `Widget.qml` must match that plugin's `workspace_count`
-  (SMW doesn't currently expose this setting to Quickshell)
+
+## Settings
+
+- `permanentWorkspaceCount` (default `0`, unlimited): always show at least
+  this many local workspace numbers per monitor. `0` shows every workspace
+  that currently exists on that monitor.
 
 ## Install
 
 Place this repo (or a symlink to it) at
-`~/.config/omarchy/plugins/community.split-workspaces/`, then:
+`~/.config/omarchy/plugins/ziryt.split-workspaces/`, then:
 
 ```bash
-omarchy plugin enable community.split-workspaces
+omarchy plugin enable ziryt.split-workspaces
 ```
