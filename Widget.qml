@@ -59,9 +59,9 @@ BarWidget {
      *     range - e.g. an occupied workspace that wasn't force-relocated.
      *     Filtering by monitor name alone would leak these stale
      *     workspaces into the list; bounding to the known range keeps them
-     *     out (verified live: shrinking DP-2's max_workspaces surfaced
-     *     exactly this - leftover workspaces from its old, larger range
-     *     kept reporting monitor=DP-2).
+     *     out (verified live: shrinking a monitor's max_workspaces
+     *     surfaced exactly this - leftover workspaces from its old, larger
+     *     range kept reporting that monitor as their own).
      */
     property var rangeByMonitor: ({})
     property bool rulesResolved: false

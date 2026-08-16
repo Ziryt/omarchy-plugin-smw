@@ -36,3 +36,16 @@ Place this repo (or a symlink to it) at
 ```bash
 omarchy plugin enable ziryt.split-workspaces
 ```
+
+## Remove
+
+```bash
+omarchy plugin disable ziryt.split-workspaces
+```
+
+Then delete the plugin directory (or remove the symlink) at
+`~/.config/omarchy/plugins/ziryt.split-workspaces/`.
+
+## License
+
+MIT - see [LICENSE](LICENSE).

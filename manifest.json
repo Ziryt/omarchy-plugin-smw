@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "ziryt.split-workspaces",
   "name": "Split Monitor Workspaces",
-  "version": "1.0.0",
-  "author": "Community",
+  "version": "0.0.4",
+  "author": "Ziryt",
   "description": "Per-monitor workspace indicators for split-monitor-workspaces.",
   "kinds": ["bar-widget"],
   "entryPoints": {
