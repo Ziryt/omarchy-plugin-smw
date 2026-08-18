@@ -18,9 +18,12 @@ show a smaller fixed count instead - anything beyond it still appears
 whenever it's occupied or active, so a cap never hides where you currently
 are.
 
-## Requirements
+## Prerequisite
 
-- Hyprland with `split-monitor-workspaces` installed and configured
+Hyprland with [split-monitor-workspaces](https://github.com/Duckonaut/split-monitor-workspaces)
+(SMW) installed and configured is required. This plugin only displays
+workspace state that SMW already manages - it does not install or configure
+SMW itself.
 
 ## Settings
 
@@ -30,7 +33,11 @@ are.
 
 ## Install
 
-Place this repo (or a symlink to it) at
+```bash
+omarchy plugin add https://github.com/Ziryt/omarchy-plugin-smw.git --enable
+```
+
+Or place this repo (or a symlink to it) at
 `~/.config/omarchy/plugins/ziryt.split-workspaces/`, then:
 
 ```bash
