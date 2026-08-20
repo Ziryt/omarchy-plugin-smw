@@ -375,7 +375,7 @@ BarWidget {
                 text:
                     active
                         ? "󱓻"
-                        : String(localId)
+                        : (localId === 10 ? "0" : String(localId))
 
                 opacity:
                     occupied || active
